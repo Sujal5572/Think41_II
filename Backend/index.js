@@ -142,6 +142,40 @@ app.post('/api/chat', async (req, res) => {
             }
         }
 
+        // ... (existing /health and /api/chat routes) ...
+
+// New: Get a list of all conversation sessions
+app.get('/api/conversations', async (req, res) => {
+    try {
+        // Fetch only necessary fields for the history panel display
+        const conversations = await Conversation.find({}, 'sessionId userId createdAt').sort({ createdAt: -1 }).limit(50); // Limit to last 50 for performance
+        res.status(200).json(conversations);
+    } catch (error) {
+        console.error('Error fetching conversation list:', error);
+        res.status(500).json({ error: 'Failed to fetch conversation list' });
+    }
+});
+
+// New: Get messages for a specific conversation session
+app.get('/api/conversations/:sessionId', async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const conversation = await Conversation.findOne({ sessionId: sessionId }).populate('messages');
+
+        if (!conversation) {
+            return res.status(404).json({ error: 'Conversation not found.' });
+        }
+        // Return messages sorted by timestamp to ensure chronological order
+        const sortedMessages = conversation.messages.sort((a, b) => a.timestamp - b.timestamp);
+        res.status(200).json(sortedMessages);
+    } catch (error) {
+        console.error('Error fetching conversation messages:', error);
+        res.status(500).json({ error: 'Failed to fetch conversation messages' });
+    }
+});
+
+// ... (rest of your index.js code, e.g., app.listen) ...
+
         // --- Call LLM for final response generation ---
         // Prepare the prompt for the LLM, including user query and any relevant database data.
         let llmPrompt = `User's query: "${message}".`;

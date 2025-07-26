@@ -1,0 +1,126 @@
+/* Existing CSS */
+/* ... */
+
+.main-content {
+  display: flex;
+  flex-grow: 1; /* Allows it to take available space */
+  overflow: hidden; /* Contains children scrolling */
+}
+
+.history-panel {
+  width: 250px; /* Fixed width for the sidebar */
+  background-color: #f8f9fa;
+  border-right: 1px solid #eee;
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto; /* Enable scrolling for history list */
+  flex-shrink: 0; /* Prevent shrinking */
+}
+
+.history-panel h2 {
+    font-size: 1.1em;
+    color: #333;
+    margin-top: 0;
+    margin-bottom: 15px;
+    text-align: center;
+}
+
+.new-chat-button {
+    background-color: #28a745;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 10px 15px;
+    cursor: pointer;
+    font-size: 0.9em;
+    margin-bottom: 15px;
+    transition: background-color 0.2s;
+    width: 100%;
+}
+
+.new-chat-button:hover {
+    background-color: #218838;
+}
+
+.conversation-list {
+    flex-grow: 1;
+    overflow-y: auto;
+}
+
+.conversation-item {
+    padding: 10px;
+    margin-bottom: 8px;
+    background-color: #e9ecef;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.2s, box-shadow 0.2s;
+    display: flex;
+    flex-direction: column;
+    font-size: 0.9em;
+    color: #555;
+}
+
+.conversation-item:hover {
+    background-color: #dee2e6;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+}
+
+.conversation-item.active {
+    background-color: #007bff;
+    color: white;
+    box-shadow: 0 2px 5px rgba(0, 123, 255, 0.3);
+}
+
+.conversation-item.active .session-id,
+.conversation-item.active .session-date {
+    color: white;
+}
+
+.session-id {
+    font-weight: bold;
+    color: #333;
+}
+
+.session-date {
+    font-size: 0.8em;
+    color: #777;
+    margin-top: 2px;
+}
+
+.no-history-message {
+    text-align: center;
+    color: #777;
+    font-style: italic;
+    font-size: 0.9em;
+    padding: 20px;
+}
+
+.chat-area {
+  flex-grow: 1; /* Allows it to take remaining space */
+  display: flex;
+  flex-direction: column;
+  padding: 15px;
+  position: relative; /* For loading indicator positioning */
+}
+
+.loading-indicator {
+  position: absolute;
+  bottom: 70px; /* Above the input field */
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #28a745;
+  color: white;
+  padding: 8px 15px;
+  border-radius: 20px;
+  font-size: 0.9em;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+  animation: pulse 1.5s infinite; /* Simple animation */
+}
+
+@keyframes pulse {
+    0% { transform: translateX(-50%) scale(1); opacity: 1; }
+    50% { transform: translateX(-50%) scale(1.05); opacity: 0.8; }
+    100% { transform: translateX(-50%) scale(1); opacity: 1; }
+}
