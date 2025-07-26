@@ -13,10 +13,18 @@ app.use(cors());
 // 2) Parse JSON bodies from incoming requests.
 app.use(express.json());
 
-// --- Import Mongoose Models for Chat History ---
-// These models are used to store the conversation flow between the user and the chatbot.
+// --- Import Mongoose Models ---
+// For chat history
 const Conversation = require('./models/Conversation');
-const Message = require('./models/Message');
+const Message = require('./models/Message'); // <-- CORRECTED LINE: Removed the extra '= require'
+
+// For e-commerce data queries (Milestone 5)
+const Product = require('./models/Product');
+const Order = require('./models/Order');
+const InventoryItem = require('./models/InventoryItem');
+
+// --- Import LLM Service ---
+const { getLlmResponse } = require('./llmService'); // Import your LLM service
 
 // --- MongoDB Connection ---
 // Establishes the connection to your MongoDB Atlas database.
@@ -42,7 +50,7 @@ app.get('/health', (req, res) => {
     res.status(200).json({ status: 'Backend service is running!' });
 });
 
-// Primary Chat Endpoint (Milestone 4: Core Chat API)
+// Primary Chat Endpoint (Milestone 4 & 5)
 // Handles user messages, stores them, and provides a basic AI response.
 app.post('/api/chat', async (req, res) => {
     const { message, conversation_id, user_id } = req.body;
@@ -55,64 +63,113 @@ app.post('/api/chat', async (req, res) => {
     // Use 'anonymous_user' if no user_id is provided, for basic user tracking.
     const currentUserId = user_id || 'anonymous_user';
 
-    // Placeholder for LLM integration (This will be expanded in Milestone 5).
-    const aiResponseText = `You said: '${message}'. I am a chatbot and will process this soon!`; 
+    let conversation;
+    let currentSessionId = conversation_id;
+    let chatHistory = []; // To store messages for LLM context
 
     try {
-        let conversation;
-        let currentSessionId = conversation_id;
-
-        // Check if this is a continuation of an existing conversation
+        // Find or create conversation
         if (conversation_id) {
-            // Try to find the conversation by session ID and user ID
-            conversation = await Conversation.findOne({ sessionId: conversation_id, userId: currentUserId });
-
-            // If the provided conversation_id doesn't exist (e.g., first message of a new session
-            // where frontend might still send an ID, or an invalid ID was passed), create a new one.
-            if (!conversation) {
-                // Generate a new unique session ID
+            // Populate 'messages' to get the full message documents, not just ObjectIDs
+            conversation = await Conversation.findOne({ sessionId: conversation_id, userId: currentUserId }).populate('messages');
+            if (conversation) {
+                chatHistory = conversation.messages; // Load previous messages for context
+            } else {
+                // If ID was provided but not found, treat as a new session
                 currentSessionId = `new_session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-                conversation = new Conversation({
-                    userId: currentUserId,
-                    sessionId: currentSessionId,
-                    messages: [] // Initialize with an empty array of messages
-                });
+                conversation = new Conversation({ userId: currentUserId, sessionId: currentSessionId, messages: [] });
+                await conversation.save(); // Save to get an _id before adding messages
             }
         } else {
-            // If no conversation_id is provided, it's definitely a new conversation.
-            // Generate a new unique session ID.
+            // New conversation
             currentSessionId = `new_session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-            conversation = new Conversation({
-                userId: currentUserId,
-                sessionId: currentSessionId,
-                messages: []
-            });
+            conversation = new Conversation({ userId: currentUserId, sessionId: currentSessionId, messages: [] });
+            await conversation.save(); // Save to get an _id before adding messages
         }
 
-        // Create and save the user's message
+        // Store user message
         const userMsg = new Message({ conversationId: conversation._id, sender: 'user', text: message });
         await userMsg.save();
+        conversation.messages.push(userMsg._id); // Push the ObjectId reference
 
-        // Create and save the AI's response message
+        let aiResponseText;
+        let dataForLlm = ''; // String to hold relevant data from DB for the LLM
+
+        // --- Milestone 5: Simple Business Logic / Intent Recognition ---
+        // This section tries to identify user intent and fetch data from your MongoDB.
+
+        // Example 1: Check Order Status (looks for "order" or "id" followed by a number)
+        const orderIdMatch = message.match(/(?:order|id)\s*#?(\d+)/i);
+        if (orderIdMatch) {
+            const orderId = parseInt(orderIdMatch[1]);
+            console.log(`User asked about order ID: ${orderId}. Checking database...`);
+            // Find order by its original CSV ID and link to the user if possible
+            const order = await Order.findOne({ csvOrderId: orderId, user: conversation.user }); 
+            
+            if (order) {
+                // Fetch order items and populate product details for a richer response
+                const orderItems = await OrderItem.find({ order: order._id }).populate('product');
+                dataForLlm = `Order ID ${order.csvOrderId} details:\nStatus: ${order.status}\nCreated At: ${order.orderCreatedAt}\nShipped At: ${order.shippedAt || 'N/A'}\nDelivered At: ${order.deliveredAt || 'N/A'}\nNumber of Items: ${order.numOfItems}.\nItems: ${orderItems.map(item => `${item.product ? item.product.name : 'Unknown Product'} (Qty: ${item.itemType || 'N/A'})`).join(', ')}.`;
+                console.log("Found order data:", dataForLlm);
+            } else {
+                dataForLlm = `No order found with ID ${orderId}.`;
+                console.log("No order data found.");
+            }
+        } 
+        
+        // Example 2: Check Product Stock (looks for "stock", "quantity", or "how many" followed by a product name)
+        // Only attempt this if no order status query was handled already
+        const productStockMatch = message.match(/(?:stock|quantity|how many)\s+(.*)(?:in stock)?/i);
+        if (!dataForLlm && productStockMatch) { 
+            const productName = productStockMatch[1].trim();
+            console.log(`User asked about stock for product: "${productName}". Checking database...`);
+            // Find products that match (case-insensitive search for product name)
+            const products = await Product.find({ name: { $regex: new RegExp(productName, 'i') } }).limit(5); // Limit search results
+
+            if (products.length > 0) {
+                let stockDetails = [];
+                for (const prod of products) {
+                    // Find inventory for each matched product
+                    const inventory = await InventoryItem.find({ product: prod._id }).populate('distributionCenter');
+                    const totalStock = inventory.reduce((sum, item) => sum + item.quantity, 0);
+                    stockDetails.push(`${prod.name} (Brand: ${prod.brand || 'N/A'}): Total Stock - ${totalStock} units across ${inventory.length} locations.`);
+                }
+                dataForLlm = `Product stock details: ${stockDetails.join('\n')}`;
+                console.log("Found product stock data:", dataForLlm);
+            } else {
+                dataForLlm = `No product found matching "${productName}".`;
+                console.log("No product stock data found.");
+            }
+        }
+
+        // --- Call LLM for final response generation ---
+        // Prepare the prompt for the LLM, including user query and any relevant database data.
+        let llmPrompt = `User's query: "${message}".`;
+        if (dataForLlm) {
+            llmPrompt += ` Relevant database information: "${dataForLlm}".`;
+        }
+        llmPrompt += ` Please respond to the user's query conversationally and helpfully based on the information provided, or ask for more details if needed to fulfill the request.`;
+
+        // Get the response from the LLM service
+        aiResponseText = await getLlmResponse(llmPrompt, chatHistory);
+        console.log("LLM generated response:", aiResponseText);
+
+        // Store AI response
         const aiMsg = new Message({ conversationId: conversation._id, sender: 'ai', text: aiResponseText });
         await aiMsg.save();
+        conversation.messages.push(aiMsg._id); // Push the ObjectId reference
 
-        // Link messages to the conversation
-        conversation.messages.push(userMsg._id);
-        conversation.messages.push(aiMsg._id);
-
-        // Save the updated conversation (with new message references)
-        await conversation.save();
+        await conversation.save(); // Save the conversation with new message references
 
         // Send back the AI's response and the conversation ID for continued interaction
         res.status(200).json({
             message: aiResponseText,
-            conversation_id: conversation.sessionId, // Return the session ID to the frontend
+            conversation_id: conversation.sessionId,
             status: 'success'
         });
 
     } catch (error) {
-        console.error('Error processing chat:', error);
+        console.error('Error in /api/chat endpoint:', error);
         res.status(500).json({ error: 'Internal server error during chat processing' });
     }
 });
